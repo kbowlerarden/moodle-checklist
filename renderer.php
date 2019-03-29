@@ -94,6 +94,7 @@ class mod_checklist_renderer extends plugin_renderer_base {
      * @param object $student (optional) the student whose checklist is being viewed (if not viewing own checklist)
      */
     public function checklist_items($items, $useritems, $groupings, $intro, output_status $status, $progress, $student = null) {
+        global $DB;
         echo $this->output->box_start('generalbox boxwidthwide boxaligncenter checklistbox');
 
         echo html_writer::tag('div', '&nbsp;', array('id' => 'checklistspinner'));
@@ -178,277 +179,280 @@ class mod_checklist_renderer extends plugin_renderer_base {
             $currindent = 0;
             foreach ($items as $item) {
 
-                if ($item->hidden) {
-                    continue;
-                }
+                if(checklist_class::availability_is_viewable($item)) {
 
-                if ($status->is_checkgroupings() && $item->grouping) {
-                    if (!in_array($item->grouping, $groupings)) {
-                        continue; // Current user is not a member of this item's grouping, so skip.
+                    if ($item->hidden) {
+                        continue;
                     }
-                }
 
-                while ($item->indent > $currindent) {
-                    $currindent++;
-                    echo '<ol class="checklist">';
-                }
-                while ($item->indent < $currindent) {
-                    $currindent--;
-                    echo '</ol>';
-                }
-                $itemname = '"item'.$item->id.'"';
-                $checked = '';
-                if ($status->is_updateform() || $status->is_viewother() || $status->is_userreport()) {
-                    if ($item->is_checked_student()) {
-                        $checked = ' checked="checked" ';
-                    }
-                }
-                if ($status->is_viewother() || $status->is_userreport()) {
-                    $checked .= ' disabled="disabled" ';
-                } else if (!$status->is_overrideauto()) {
-                    if ($item->is_auto_item()) {
-                        $checked .= ' disabled="disabled" ';
-                    }
-                }
-                switch ($item->colour) {
-                    case 'red':
-                        $itemcolour = 'itemred';
-                        break;
-                    case 'orange':
-                        $itemcolour = 'itemorange';
-                        break;
-                    case 'green':
-                        $itemcolour = 'itemgreen';
-                        break;
-                    case 'purple':
-                        $itemcolour = 'itempurple';
-                        break;
-                    default:
-                        $itemcolour = 'itemblack';
-                }
-
-                $checkclass = '';
-                if ($item->is_heading()) {
-                    $optional = ' class="itemheading '.$itemcolour.'" ';
-                } else if ($item->is_required()) {
-                    $optional = ' class="'.$itemcolour.'" ';
-                } else {
-                    $optional = ' class="itemoptional '.$itemcolour.'" ';
-                    $checkclass = ' itemoptional';
-                }
-
-                echo '<li>';
-                if ($status->is_showteachermark()) {
-                    if (!$item->is_heading()) {
-                        if ($status->is_viewother()) {
-                            $opts = [
-                                CHECKLIST_TEACHERMARK_UNDECIDED => '',
-                                CHECKLIST_TEACHERMARK_YES => get_string('yes'),
-                                CHECKLIST_TEACHERMARK_NO => get_string('no'),
-                            ];
-                            $attr = ['id' => 'item'.$item->id]; // TODO davo - fix itemname handling.
-                            if ($status->is_teachermarklocked() && $item->is_checked_teacher()) {
-                                $attr['disabled'] = 'disabled';
-                            } else if (!$status->is_showcheckbox() && !$status->is_overrideauto() && $item->is_auto_item()) {
-                                // For teacher-only checklists with autoupdate not allowed to override, disable changing of
-                                // automatic update items.
-                                $attr['disabled'] = 'disabled';
-                            }
-
-                            echo html_writer::select($opts, "items[{$item->id}]", $item->teachermark, false, $attr);
-
-                        } else {
-                            echo html_writer::empty_tag('img', [
-                                'src' => $item->get_teachermark_image_url(),
-                                'alt' => $item->get_teachermark_text(),
-                                'title' => $item->get_teachermark_text(),
-                                'class' => $item->get_teachermark_class(),
-                            ]);
+                    if ($status->is_checkgroupings() && $item->grouping) {
+                        if (!in_array($item->grouping, $groupings)) {
+                            continue; // Current user is not a member of this item's grouping, so skip.
                         }
                     }
-                }
-                if ($status->is_showcheckbox()) {
-                    if (!$item->is_heading()) {
-                        $id = ' id='.$itemname.' ';
-                        if ($status->is_viewother() && $status->is_showteachermark()) {
-                            $id = '';
-                        }
-                        echo '<input class="checklistitem'.$checkclass.'" type="checkbox" name="items[]" '.$id.$checked.
-                            ' value="'.$item->id.'" />';
-                    }
-                }
-                echo '<label for='.$itemname.$optional.'>'.format_string($item->displaytext).'</label>';
-                echo $this->item_grouping($item);
 
-                echo $this->checklist_item_link($item);
-
-                if ($status->is_addown()) {
-                    echo '&nbsp;<a href="'.$thispageurl->out(true, array(
-                            'itemid' => $item->id, 'sesskey' => sesskey(), 'action' => 'startadditem'
-                        )).'">';
-                    $title = get_string('additemalt', 'checklist');
-                    echo $this->output->pix_icon('add', $title, 'mod_checklist', ['title' => $title]).'</a>';
-                }
-
-                if ($item->duetime) {
-                    if ($item->duetime > time()) {
-                        echo '<span class="checklist-itemdue"> '.userdate($item->duetime, get_string('strftimedate')).'</span>';
-                    } else {
-                        echo '<span class="checklist-itemoverdue"> '.userdate($item->duetime, get_string('strftimedate')).'</span>';
-                    }
-                }
-
-                if ($status->is_showcompletiondates()) {
-                    if (!$item->is_heading()) {
-                        if ($status->is_showteachermark() && $item->teachertimestamp) {
-                            if ($item->get_teachername()) {
-                                echo '<span class="itemteachername" title="'.$strteachername.'">'.
-                                    $item->get_teachername().'</span>';
-                            }
-                            echo '<span class="itemteacherdate" title="'.$strteacherdate.'">'.
-                                userdate($item->teachertimestamp, get_string('strftimedatetimeshort')).'</span>';
-                        }
-                        if ($status->is_showcheckbox() && $item->usertimestamp) {
-                            echo '<span class="itemuserdate" title="'.$struserdate.'">'.
-                                userdate($item->usertimestamp, get_string('strftimedatetimeshort')).'</span>';
-                        }
-                    }
-                }
-
-                if ($status->is_teachercomments()) {
-                    if ($comment = $item->get_comment()) {
-                        echo ' <span class="teachercomment">&nbsp;';
-                        if ($comment->commentby) {
-                            echo '<a href="'.$comment->get_commentby_url().'">'.$comment->get_commentby_name().'</a>: ';
-                        }
-                        if ($status->is_editcomments()) {
-                            $outid = '';
-                            if (!$focusitem) {
-                                $focusitem = 'firstcomment';
-                                $outid = ' id="firstcomment" ';
-                            }
-                            echo '<input type="text" name="teachercomment['.$item->id.']" value="'.s($comment->text).
-                                '" '.$outid.'/>';
-                        } else {
-                            echo s($comment->text);
-                        }
-                        echo '&nbsp;</span>';
-                    } else if ($status->is_editcomments()) {
-                        echo '&nbsp;<input type="text" name="teachercomment['.$item->id.']" />';
-                    }
-                }
-
-                echo '</li>';
-
-                // Output any user-added items.
-                if ($useritems) {
-                    /** @var checklist_item $useritem */
-                    $useritem = current($useritems);
-
-                    if ($useritem && ($useritem->position == $item->position)) {
-                        $thisitemurl = new moodle_url($thispageurl, ['action' => 'updateitem', 'sesskey' => sesskey()]);
-
+                    while ($item->indent > $currindent) {
+                        $currindent++;
                         echo '<ol class="checklist">';
-                        while ($useritem && ($useritem->position == $item->position)) {
-                            $itemname = '"item'.$useritem->id.'"';
-                            $checked = ($status->is_updateform() && $useritem->is_checked_student()) ? ' checked="checked" ' : '';
-                            if ($useritem->is_editme()) {
-                                $itemtext = explode("\n", $useritem->displaytext, 2);
-                                $itemtext[] = '';
-                                $text = $itemtext[0];
-                                $note = $itemtext[1];
-                                $thisitemurl->param('itemid', $useritem->id);
-
-                                echo '<li>';
-                                echo '<div style="float: left;">';
-                                if ($status->is_showcheckbox()) {
-                                    echo '<input class="checklistitem itemoptional" type="checkbox" name="items[]" id='.
-                                        $itemname.$checked.' disabled="disabled" value="'.$useritem->id.'" />';
-                                }
-                                echo '<form style="display:inline" action="'.$thisitemurl->out_omit_querystring().
-                                    '" method="post">';
-                                echo html_writer::input_hidden_params($thisitemurl);
-                                echo '<input type="text" size="'.CHECKLIST_TEXT_INPUT_WIDTH.'" name="displaytext" value="'.s($text).
-                                    '" id="updateitembox" />';
-                                echo '<input type="submit" name="updateitem" value="'.get_string('updateitem', 'checklist').'" />';
-                                echo '<br />';
-                                echo '<textarea name="displaytextnote" rows="3" cols="25">'.s($note).'</textarea>';
-                                echo '</form>';
-                                echo '</div>';
-
-                                echo '<form style="display:inline;" action="'.$thispageurl->out_omit_querystring().
-                                    '" method="get">';
-                                echo html_writer::input_hidden_params($thispageurl);
-                                echo '<input type="submit" name="canceledititem" value="'.
-                                    get_string('canceledititem', 'checklist').'" />';
-                                echo '</form>';
-                                echo '<br style="clear: both;" />';
-                                echo '</li>';
-
-                                $focusitem = 'updateitembox';
-                            } else {
-                                echo '<li>';
-                                if ($status->is_showcheckbox()) {
-                                    echo '<input class="checklistitem itemoptional" type="checkbox" name="items[]" id='.
-                                        $itemname.$checked.' value="'.$useritem->id.'" />';
-                                }
-                                $splittext = explode("\n", s($useritem->displaytext), 2);
-                                $splittext[] = '';
-                                $text = $splittext[0];
-                                $note = str_replace("\n", '<br />', $splittext[1]);
-                                echo '<label class="useritem" for='.$itemname.'>'.$text.'</label>';
-
-                                if ($status->is_addown()) {
-                                    $baseurl = $thispageurl.'&amp;itemid='.$useritem->id.'&amp;sesskey='.sesskey().'&amp;action=';
-                                    echo '&nbsp;<a href="'.$baseurl.'edititem">';
-                                    $title = get_string('edititem', 'checklist');
-                                    echo $this->output->pix_icon('t/edit', $title, 'moodle', ['title' => $title]).'</a>';
-
-                                    echo '&nbsp;<a href="'.$baseurl.'deleteitem" class="deleteicon">';
-                                    $title = get_string('deleteitem', 'checklist');
-                                    echo $this->output->pix_icon('remove', $title, 'mod_checklist', ['title' => $title]).'</a>';
-                                }
-                                if ($note != '') {
-                                    echo '<div class="note">'.$note.'</div>';
-                                }
-
-                                echo '</li>';
-                            }
-                            $useritem = next($useritems);
-                        }
+                    }
+                    while ($item->indent < $currindent) {
+                        $currindent--;
                         echo '</ol>';
                     }
-                }
-
-                if ($status->is_addown() && ($item->id == $status->get_additemafter())) {
-                    $thisitemurl = clone $thispageurl;
-                    $thisitemurl->param('action', 'additem');
-                    $thisitemurl->param('position', $item->position);
-                    $thisitemurl->param('sesskey', sesskey());
-
-                    echo '<ol class="checklist"><li>';
-                    echo '<div style="float: left;">';
-                    echo '<form action="'.$thispageurl->out_omit_querystring().'" method="post">';
-                    echo html_writer::input_hidden_params($thisitemurl);
-                    if ($status->is_showcheckbox()) {
-                        echo '<input type="checkbox" disabled="disabled" />';
+                    $itemname = '"item'.$item->id.'"';
+                    $checked = '';
+                    if ($status->is_updateform() || $status->is_viewother() || $status->is_userreport()) {
+                        if ($item->is_checked_student()) {
+                            $checked = ' checked="checked" ';
+                        }
                     }
-                    echo '<input type="text" size="'.CHECKLIST_TEXT_INPUT_WIDTH.'" name="displaytext" value="" id="additembox" />';
-                    echo '<input type="submit" name="additem" value="'.get_string('additem', 'checklist').'" />';
-                    echo '<br />';
-                    echo '<textarea name="displaytextnote" rows="3" cols="25"></textarea>';
-                    echo '</form>';
-                    echo '</div>';
+                    if ($status->is_viewother() || $status->is_userreport()) {
+                        $checked .= ' disabled="disabled" ';
+                    } else if (!$status->is_overrideauto()) {
+                        if ($item->is_auto_item()) {
+                            $checked .= ' disabled="disabled" ';
+                        }
+                    }
+                    switch ($item->colour) {
+                        case 'red':
+                            $itemcolour = 'itemred';
+                            break;
+                        case 'orange':
+                            $itemcolour = 'itemorange';
+                            break;
+                        case 'green':
+                            $itemcolour = 'itemgreen';
+                            break;
+                        case 'purple':
+                            $itemcolour = 'itempurple';
+                            break;
+                        default:
+                            $itemcolour = 'itemblack';
+                    }
 
-                    echo '<form style="display:inline" action="'.$thispageurl->out_omit_querystring().'" method="get">';
-                    echo html_writer::input_hidden_params($thispageurl);
-                    echo '<input type="submit" name="canceledititem" value="'.get_string('canceledititem', 'checklist').'" />';
-                    echo '</form>';
-                    echo '<br style="clear: both;" />';
-                    echo '</li></ol>';
+                    $checkclass = '';
+                    if ($item->is_heading()) {
+                        $optional = ' class="itemheading '.$itemcolour.'" ';
+                    } else if ($item->is_required()) {
+                        $optional = ' class="'.$itemcolour.'" ';
+                    } else {
+                        $optional = ' class="itemoptional '.$itemcolour.'" ';
+                        $checkclass = ' itemoptional';
+                    }
 
-                    if (!$focusitem) {
-                        $focusitem = 'additembox';
+                    echo '<li>';
+                    if ($status->is_showteachermark()) {
+                        if (!$item->is_heading()) {
+                            if ($status->is_viewother()) {
+                                $opts = [
+                                    CHECKLIST_TEACHERMARK_UNDECIDED => '',
+                                    CHECKLIST_TEACHERMARK_YES => get_string('yes'),
+                                    CHECKLIST_TEACHERMARK_NO => get_string('no'),
+                                ];
+                                $attr = ['id' => 'item'.$item->id]; // TODO davo - fix itemname handling.
+                                if ($status->is_teachermarklocked() && $item->is_checked_teacher()) {
+                                    $attr['disabled'] = 'disabled';
+                                } else if (!$status->is_showcheckbox() && !$status->is_overrideauto() && $item->is_auto_item()) {
+                                    // For teacher-only checklists with autoupdate not allowed to override, disable changing of
+                                    // automatic update items.
+                                    $attr['disabled'] = 'disabled';
+                                }
+
+                                echo html_writer::select($opts, "items[{$item->id}]", $item->teachermark, false, $attr);
+
+                            } else {
+                                echo html_writer::empty_tag('img', [
+                                    'src' => $item->get_teachermark_image_url(),
+                                    'alt' => $item->get_teachermark_text(),
+                                    'title' => $item->get_teachermark_text(),
+                                    'class' => $item->get_teachermark_class(),
+                                ]);
+                            }
+                        }
+                    }
+                    if ($status->is_showcheckbox()) {
+                        if (!$item->is_heading()) {
+                            $id = ' id='.$itemname.' ';
+                            if ($status->is_viewother() && $status->is_showteachermark()) {
+                                $id = '';
+                            }
+                            echo '<input class="checklistitem'.$checkclass.'" type="checkbox" name="items[]" '.$id.$checked.
+                                ' value="'.$item->id.'" />';
+                        }
+                    }
+                    echo '<label for='.$itemname.$optional.'>'.format_string($item->displaytext).'</label>';
+                    echo $this->item_grouping($item);
+
+                    echo $this->checklist_item_link($item);
+
+                    if ($status->is_addown()) {
+                        echo '&nbsp;<a href="'.$thispageurl->out(true, array(
+                                'itemid' => $item->id, 'sesskey' => sesskey(), 'action' => 'startadditem'
+                            )).'">';
+                        $title = get_string('additemalt', 'checklist');
+                        echo $this->output->pix_icon('add', $title, 'mod_checklist', ['title' => $title]).'</a>';
+                    }
+
+                    if ($item->duetime) {
+                        if ($item->duetime > time()) {
+                            echo '<span class="checklist-itemdue"> '.userdate($item->duetime, get_string('strftimedate')).'</span>';
+                        } else {
+                            echo '<span class="checklist-itemoverdue"> '.userdate($item->duetime, get_string('strftimedate')).'</span>';
+                        }
+                    }
+
+                    if ($status->is_showcompletiondates()) {
+                        if (!$item->is_heading()) {
+                            if ($status->is_showteachermark() && $item->teachertimestamp) {
+                                if ($item->get_teachername()) {
+                                    echo '<span class="itemteachername" title="'.$strteachername.'">'.
+                                        $item->get_teachername().'</span>';
+                                }
+                                echo '<span class="itemteacherdate" title="'.$strteacherdate.'">'.
+                                    userdate($item->teachertimestamp, get_string('strftimedatetimeshort')).'</span>';
+                            }
+                            if ($status->is_showcheckbox() && $item->usertimestamp) {
+                                echo '<span class="itemuserdate" title="'.$struserdate.'">'.
+                                    userdate($item->usertimestamp, get_string('strftimedatetimeshort')).'</span>';
+                            }
+                        }
+                    }
+
+                    if ($status->is_teachercomments()) {
+                        if ($comment = $item->get_comment()) {
+                            echo ' <span class="teachercomment">&nbsp;';
+                            if ($comment->commentby) {
+                                echo '<a href="'.$comment->get_commentby_url().'">'.$comment->get_commentby_name().'</a>: ';
+                            }
+                            if ($status->is_editcomments()) {
+                                $outid = '';
+                                if (!$focusitem) {
+                                    $focusitem = 'firstcomment';
+                                    $outid = ' id="firstcomment" ';
+                                }
+                                echo '<input type="text" name="teachercomment['.$item->id.']" value="'.s($comment->text).
+                                    '" '.$outid.'/>';
+                            } else {
+                                echo s($comment->text);
+                            }
+                            echo '&nbsp;</span>';
+                        } else if ($status->is_editcomments()) {
+                            echo '&nbsp;<input type="text" name="teachercomment['.$item->id.']" />';
+                        }
+                    }
+
+                    echo '</li>';
+
+                    // Output any user-added items.
+                    if ($useritems) {
+                        /** @var checklist_item $useritem */
+                        $useritem = current($useritems);
+
+                        if ($useritem && ($useritem->position == $item->position)) {
+                            $thisitemurl = new moodle_url($thispageurl, ['action' => 'updateitem', 'sesskey' => sesskey()]);
+
+                            echo '<ol class="checklist">';
+                            while ($useritem && ($useritem->position == $item->position)) {
+                                $itemname = '"item'.$useritem->id.'"';
+                                $checked = ($status->is_updateform() && $useritem->is_checked_student()) ? ' checked="checked" ' : '';
+                                if ($useritem->is_editme()) {
+                                    $itemtext = explode("\n", $useritem->displaytext, 2);
+                                    $itemtext[] = '';
+                                    $text = $itemtext[0];
+                                    $note = $itemtext[1];
+                                    $thisitemurl->param('itemid', $useritem->id);
+
+                                    echo '<li>';
+                                    echo '<div style="float: left;">';
+                                    if ($status->is_showcheckbox()) {
+                                        echo '<input class="checklistitem itemoptional" type="checkbox" name="items[]" id='.
+                                            $itemname.$checked.' disabled="disabled" value="'.$useritem->id.'" />';
+                                    }
+                                    echo '<form style="display:inline" action="'.$thisitemurl->out_omit_querystring().
+                                        '" method="post">';
+                                    echo html_writer::input_hidden_params($thisitemurl);
+                                    echo '<input type="text" size="'.CHECKLIST_TEXT_INPUT_WIDTH.'" name="displaytext" value="'.s($text).
+                                        '" id="updateitembox" />';
+                                    echo '<input type="submit" name="updateitem" value="'.get_string('updateitem', 'checklist').'" />';
+                                    echo '<br />';
+                                    echo '<textarea name="displaytextnote" rows="3" cols="25">'.s($note).'</textarea>';
+                                    echo '</form>';
+                                    echo '</div>';
+
+                                    echo '<form style="display:inline;" action="'.$thispageurl->out_omit_querystring().
+                                        '" method="get">';
+                                    echo html_writer::input_hidden_params($thispageurl);
+                                    echo '<input type="submit" name="canceledititem" value="'.
+                                        get_string('canceledititem', 'checklist').'" />';
+                                    echo '</form>';
+                                    echo '<br style="clear: both;" />';
+                                    echo '</li>';
+
+                                    $focusitem = 'updateitembox';
+                                } else {
+                                    echo '<li>';
+                                    if ($status->is_showcheckbox()) {
+                                        echo '<input class="checklistitem itemoptional" type="checkbox" name="items[]" id='.
+                                            $itemname.$checked.' value="'.$useritem->id.'" />';
+                                    }
+                                    $splittext = explode("\n", s($useritem->displaytext), 2);
+                                    $splittext[] = '';
+                                    $text = $splittext[0];
+                                    $note = str_replace("\n", '<br />', $splittext[1]);
+                                    echo '<label class="useritem" for='.$itemname.'>'.$text.'</label>';
+
+                                    if ($status->is_addown()) {
+                                        $baseurl = $thispageurl.'&amp;itemid='.$useritem->id.'&amp;sesskey='.sesskey().'&amp;action=';
+                                        echo '&nbsp;<a href="'.$baseurl.'edititem">';
+                                        $title = get_string('edititem', 'checklist');
+                                        echo $this->output->pix_icon('t/edit', $title, 'moodle', ['title' => $title]).'</a>';
+
+                                        echo '&nbsp;<a href="'.$baseurl.'deleteitem" class="deleteicon">';
+                                        $title = get_string('deleteitem', 'checklist');
+                                        echo $this->output->pix_icon('remove', $title, 'mod_checklist', ['title' => $title]).'</a>';
+                                    }
+                                    if ($note != '') {
+                                        echo '<div class="note">'.$note.'</div>';
+                                    }
+
+                                    echo '</li>';
+                                }
+                                $useritem = next($useritems);
+                            }
+                            echo '</ol>';
+                        }
+                    }
+
+                    if ($status->is_addown() && ($item->id == $status->get_additemafter())) {
+                        $thisitemurl = clone $thispageurl;
+                        $thisitemurl->param('action', 'additem');
+                        $thisitemurl->param('position', $item->position);
+                        $thisitemurl->param('sesskey', sesskey());
+
+                        echo '<ol class="checklist"><li>';
+                        echo '<div style="float: left;">';
+                        echo '<form action="'.$thispageurl->out_omit_querystring().'" method="post">';
+                        echo html_writer::input_hidden_params($thisitemurl);
+                        if ($status->is_showcheckbox()) {
+                            echo '<input type="checkbox" disabled="disabled" />';
+                        }
+                        echo '<input type="text" size="'.CHECKLIST_TEXT_INPUT_WIDTH.'" name="displaytext" value="" id="additembox" />';
+                        echo '<input type="submit" name="additem" value="'.get_string('additem', 'checklist').'" />';
+                        echo '<br />';
+                        echo '<textarea name="displaytextnote" rows="3" cols="25"></textarea>';
+                        echo '</form>';
+                        echo '</div>';
+
+                        echo '<form style="display:inline" action="'.$thispageurl->out_omit_querystring().'" method="get">';
+                        echo html_writer::input_hidden_params($thispageurl);
+                        echo '<input type="submit" name="canceledititem" value="'.get_string('canceledititem', 'checklist').'" />';
+                        echo '</form>';
+                        echo '<br style="clear: both;" />';
+                        echo '</li></ol>';
+
+                        if (!$focusitem) {
+                            $focusitem = 'additembox';
+                        }
                     }
                 }
             }

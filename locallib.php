@@ -545,7 +545,6 @@ class checklist_class {
         if ((!$this->items) && $this->canedit()) {
             redirect(new moodle_url('/mod/checklist/edit.php', array('id' => $this->cm->id)));
         }
-
         if ($this->canupdateown()) {
             $currenttab = 'view';
         } else if ($this->canpreview()) {
@@ -736,6 +735,7 @@ class checklist_class {
     }
 
     protected function get_progress() {
+        global $DB;
         if (!$this->items) {
             return null;
         }
@@ -756,6 +756,9 @@ class checklist_class {
                     continue; // Current user is not a member of this item's grouping.
                 }
             }
+            if(!self::availability_is_viewable($item)) {
+                continue; // Current user cannot see this item
+            }
             if ($item->is_required()) {
                 $requireditems++;
                 if ($item->is_checked($teacherprogress)) {
@@ -772,10 +775,12 @@ class checklist_class {
         if (!$teacherprogress) {
             if ($this->useritems) {
                 foreach ($this->useritems as $item) {
-                    if ($item->is_checked_student()) {
-                        $allcompleteitems++;
+                    if(self::availability_is_viewable($item)) {
+                        if ($item->is_checked_student()) {
+                            $allcompleteitems++;
+                        }
+                        $totalitems++;
                     }
-                    $totalitems++;
                 }
             }
         }
@@ -792,7 +797,6 @@ class checklist_class {
      */
     protected function view_items($viewother = false, $userreport = false) {
         global $DB, $PAGE;
-
         // Configure the status of the checklist output.
         $status = new output_status();
         $status->set_viewother($viewother);
@@ -1043,6 +1047,8 @@ class checklist_class {
             $ausers = $DB->get_records_sql("SELECT u.id, $fields FROM {user} u WHERE u.id ".$usql.' ORDER BY '.$orderby, $uparams);
         }
 
+        $totalitems = array();
+
         if ($reportsettings->showprogressbars) {
             if ($ausers) {
                 // Show just progress bars.
@@ -1050,38 +1056,48 @@ class checklist_class {
                     $itemstocount = array();
                     foreach ($this->items as $item) {
                         if (!$item->hidden) {
-                            if (($item->itemoptional == CHECKLIST_OPTIONAL_YES) || ($item->itemoptional == CHECKLIST_OPTIONAL_NO)) {
-                                $itemstocount[] = $item->id;
+                            // at this point, we need to loop through all the users and check against this item's availabilitiy.
+                            foreach($ausers as $u) {
+                                if(self::availability_is_viewable($item, $u->id)) {
+                                    if (($item->itemoptional == CHECKLIST_OPTIONAL_YES) || ($item->itemoptional == CHECKLIST_OPTIONAL_NO)) {
+                                        $itemstocount[$u->id][] = $item->id;
+                                        $totalitems[$u->id] = count($itemstocount[$u->id]);
+                                    }
+                                }
+
                             }
+
                         }
                     }
                 } else {
                     $itemstocount = array();
                     foreach ($this->items as $item) {
                         if (!$item->hidden) {
-                            if ($item->itemoptional == CHECKLIST_OPTIONAL_NO) {
-                                $itemstocount[] = $item->id;
+                            foreach($ausers as $u) {
+                                if ($item->itemoptional == CHECKLIST_OPTIONAL_NO) {
+                                    $itemstocount[$u->id][] = $item->id;
+                                    $totalitems[$u->id] = count($itemstocount[$u->id]);
+                                }
                             }
                         }
                     }
                 }
-                $totalitems = count($itemstocount);
 
-                $sql = '';
-                if ($totalitems) {
-                    list($isql, $iparams) = $DB->get_in_or_equal($itemstocount, SQL_PARAMS_NAMED);
-                    if ($this->checklist->teacheredit == CHECKLIST_MARKING_STUDENT) {
-                        $sql = 'usertimestamp > 0 AND item '.$isql.' AND userid = :user ';
-                    } else {
-                        $sql = 'teachermark = '.CHECKLIST_TEACHERMARK_YES.' AND item '.$isql.' AND userid = :user ';
-                    }
-                }
                 echo '<div>';
                 foreach ($ausers as $auser) {
                     if ($totalitems) {
+
+                        $sql = '';
+                        list($isql, $iparams) = $DB->get_in_or_equal($itemstocount[$auser->id], SQL_PARAMS_NAMED);
+                        if ($this->checklist->teacheredit == CHECKLIST_MARKING_STUDENT) {
+                            $sql = 'usertimestamp > 0 AND item '.$isql.' AND userid = :user ';
+                        } else {
+                            $sql = 'teachermark = '.CHECKLIST_TEACHERMARK_YES.' AND item '.$isql.' AND userid = :user ';
+                        }
+
                         $iparams['user'] = $auser->id;
                         $tickeditems = $DB->count_records_select('checklist_check', $sql, $iparams);
-                        $percentcomplete = ($tickeditems * 100) / $totalitems;
+                        $percentcomplete = ($tickeditems * 100) / $totalitems[$auser->id];
                     } else {
                         $percentcomplete = 0;
                         $tickeditems = 0;
@@ -1104,7 +1120,7 @@ class checklist_class {
                     echo '</div>';
                     echo '<div class="checklist_percentcomplete" style="float:left; width: 3em;">&nbsp;'.
                         sprintf('%0d%%', $percentcomplete).'</div>';
-                    echo '<div style="float:left;">&nbsp;('.$tickeditems.'/'.$totalitems.')</div>';
+                    echo '<div style="float:left;">&nbsp;('.$tickeditems.'/'.$totalitems[$auser->id].')</div>';
                     echo '<br style="clear:both;" />';
                 }
                 echo '</div>';
@@ -2793,5 +2809,21 @@ class checklist_class {
             $allgroupings[$courseid] = $ret;
         }
         return $allgroupings[$courseid];
+    }
+
+    /**
+     * Function to check if a given user has permission to access a given activity
+     * @param $item A checklist item.
+     * @param $user A given user to check. If not present, will use the current logged in user.
+     * @return true|false if the user has access.
+     * @see https://docs.moodle.org/dev/Availability_API
+     * @throws moodle_exception when course is not found (nothing is thrown if resetting)
+     */
+    public static function availability_is_viewable($item, $user = null) {
+        global $DB;
+        $course = $DB->get_field('course_modules', 'course', ['id' => $item->moduleid]);
+        $modinfo = get_fast_modinfo($course, $user);
+        $cm = $modinfo->get_cm($item->moduleid);
+        return $cm->uservisible;
     }
 }
