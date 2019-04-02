@@ -2713,6 +2713,12 @@ class checklist_class {
         if (empty($items)) {
             return array(false, false);
         }
+        foreach($items as $key => $item) {
+            $item_loaded = checklist_item::fetch(['id' => $key]);
+            if(!self::availability_is_viewable($item_loaded, $userid)) {
+                unset($items[$key]);
+            }
+        }
         $total = count($items);
         list($isql, $iparams) = $DB->get_in_or_equal(array_keys($items));
         $params = array_merge(array($userid), $iparams);
